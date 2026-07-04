@@ -1,0 +1,330 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bingo Master - Cartelas Animadas</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Partículas de Fundo -->
+  <div class="background-glow"></div>
+
+  <!-- Tela de Login / Cadastro -->
+  <div id="auth-screen" class="auth-box fade-in">
+    <div class="logo-container floating">
+      <span class="ball-logo">B</span>
+      <span class="ball-logo">I</span>
+      <span class="ball-logo">N</span>
+      <span class="ball-logo">G</span>
+      <span class="ball-logo">O</span>
+    </div>
+    <h2 id="auth-title">Entrar no Jogo</h2>
+    <div class="input-group">
+      <input type="email" id="auth-email" required placeholder=" ">
+      <label>Seu e-mail</label>
+    </div>
+    <div class="input-group">
+      <input type="password" id="auth-password" required placeholder=" ">
+      <label>Sua senha</label>
+    </div>
+    <button id="btn-main-auth" class="pulse-button">Entrar no Jogo</button>
+    <div id="toggle-auth-mode" class="toggle-auth">Não tem conta? Cadastre-se agora</div>
+  </div>
+
+  <!-- Painel do Jogo (Logado) -->
+  <div id="app-screen" class="container">
+    <div class="header slide-down">
+      <div class="user-info">
+        <div class="avatar">🎰</div>
+        <div>Olá, <span id="user-display">...</span></div>
+      </div>
+      <button id="btn-logout" class="btn-secondary">Sair</button>
+    </div>
+
+    <div class="dashboard">
+      <!-- Área Central do Jogo -->
+      <div class="game-area scale-in">
+        <div class="card-header-wrapper">
+          <h3>Cartela Ativa</h3>
+          <span id="active-card-badge" class="badge">Nenhuma</span>
+        </div>
+        
+        <div id="bingo-card-container" class="bingo-card">
+          <!-- Gerado dinamicamente -->
+        </div>
+        
+        <div class="controls">
+          <button id="btn-new-card" class="pulse-button">Nova Cartela</button>
+          <button id="btn-reuse-card" class="btn-secondary">Reutilizar Cartela</button>
+        </div>
+      </div>
+
+      <!-- Barra Lateral de Histórico -->
+      <div class="sidebar slide-up">
+        <h3>Histórico de Cartelas</h3>
+        <ul id="history-list" class="history-list">
+          <!-- Gerado dinamicamente -->
+        </ul>
+      </div>
+    </div>
+  </div>
+
+  <!-- Firebase e Lógica da Aplicação -->
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-app.js";
+    import { getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword, signOut, onAuthStateChanged } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-auth.js";
+    import { getDatabase, ref, set, push, onValue } from "https://www.gstatic.com/firebasejs/10.8.0/firebase-database.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyAfG1gFI4SoEdttmhwORZt92_9bgqJcsgw",
+      authDomain: "call-9cc3b.firebaseapp.com",
+      databaseURL: "https://call-9cc3b-default-rtdb.firebaseio.com",
+      projectId: "call-9cc3b",
+      storageBucket: "call-9cc3b.firebasestorage.app",
+      messagingSenderId: "919168566449",
+      appId: "1:919168566449:web:b57c4c4020bf3cace30e90",
+      measurementId: "G-GYBCF1LG64"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const auth = getAuth(app);
+    const db = getDatabase(app);
+
+    let currentUser = null;
+    let isLoginMode = true;
+    let activeCardId = null;
+    let localCardsCache = {};
+
+    const authScreen = document.getElementById('auth-screen');
+    const appScreen = document.getElementById('app-screen');
+    const authTitle = document.getElementById('auth-title');
+    const authEmail = document.getElementById('auth-email');
+    const authPassword = document.getElementById('auth-password');
+    const btnMainAuth = document.getElementById('btn-main-auth');
+    const toggleAuthMode = document.getElementById('toggle-auth-mode');
+    const userDisplay = document.getElementById('user-display');
+    const btnLogout = document.getElementById('btn-logout');
+    const btnNewCard = document.getElementById('btn-new-card');
+    const btnReuseCard = document.getElementById('btn-reuse-card');
+    const bingoCardContainer = document.getElementById('bingo-card-container');
+    const historyList = document.getElementById('history-list');
+    const activeCardBadge = document.getElementById('active-card-badge');
+
+    toggleAuthMode.addEventListener('click', () => {
+      isLoginMode = !isLoginMode;
+      authScreen.classList.remove('fade-in');
+      void authScreen.offsetWidth; // Trigger reflow
+      authScreen.classList.add('fade-in');
+      
+      authTitle.innerText = isLoginMode ? 'Entrar no Jogo' : 'Criar Nova Conta';
+      btnMainAuth.innerText = isLoginMode ? 'Entrar no Jogo' : 'Cadastrar e Jogar';
+      toggleAuthMode.innerText = isLoginMode ? 'Não tem conta? Cadastre-se agora' : 'Já tem uma conta? Faça Login';
+    });
+
+    btnMainAuth.addEventListener('click', async () => {
+      const email = authEmail.value.trim();
+      const password = authPassword.value;
+      if(!email || !password) return alert('Por favor, preencha todos os campos.');
+
+      btnMainAuth.innerText = 'Processando...';
+      try {
+        if(isLoginMode) {
+          await signInWithEmailAndPassword(auth, email, password);
+        } else {
+          await createUserWithEmailAndPassword(auth, email, password);
+        }
+      } catch (error) {
+        alert('Erro: ' + error.message);
+        btnMainAuth.innerText = isLoginMode ? 'Entrar no Jogo' : 'Cadastrar e Jogar';
+      }
+    });
+
+    btnLogout.addEventListener('click', () => signOut(auth));
+
+    onAuthStateChanged(auth, (user) => {
+      if (user) {
+        currentUser = user;
+        userDisplay.innerText = user.email.split('@')[0];
+        authScreen.style.display = 'none';
+        appScreen.style.display = 'flex';
+        listenToUserCards();
+      } else {
+        currentUser = null;
+        activeCardId = null;
+        authScreen.style.display = 'block';
+        appScreen.style.display = 'none';
+        bingoCardContainer.innerHTML = '';
+        historyList.innerHTML = '';
+      }
+    });
+
+    function getRandomUniqueArray(min, max, count) {
+      const arr = [];
+      while(arr.length < count){
+        const r = Math.floor(Math.random() * (max - min + 1)) + min;
+        if(arr.indexOf(r) === -1) arr.push(r);
+      }
+      return arr.sort((a, b) => a - b);
+    }
+
+    function generateBingoMatrix() {
+      const b = getRandomUniqueArray(1, 15, 5);
+      const i = getRandomUniqueArray(16, 30, 5);
+      const n = getRandomUniqueArray(31, 45, 5);
+      const g = getRandomUniqueArray(46, 60, 5);
+      const o = getRandomUniqueArray(61, 75, 5);
+
+      const matrix = [];
+      for(let r = 0; r < 5; r++) {
+        matrix[r] = [];
+        for(let c = 0; c < 5; c++) {
+          if(r === 2 && c === 2) {
+            matrix[r][c] = "FREE";
+          } else {
+            matrix[r][c] = c === 0 ? b[r] : c === 1 ? i[r] : c === 2 ? n[r] : c === 3 ? g[r] : o[r];
+          }
+        }
+      }
+      return matrix;
+    }
+
+    btnNewCard.addEventListener('click', async () => {
+      if(!currentUser) return;
+      
+      bingoCardContainer.classList.add('pop-out');
+      setTimeout(async () => {
+        const newMatrix = generateBingoMatrix();
+        const cardsRef = ref(db, `users/${currentUser.uid}/cards`);
+        
+        const newCardData = {
+          matrix: newMatrix,
+          marked: { "2-2": true },
+          timestamp: Date.now()
+        };
+
+        const newCardRef = push(cardsRef);
+        await set(newCardRef, newCardData);
+        activeCardId = newCardRef.key;
+        renderActiveCard();
+      }, 300);
+    });
+
+    btnReuseCard.addEventListener('click', async () => {
+      if(!currentUser || !activeCardId) return;
+      
+      const cells = document.querySelectorAll('.bingo-cell.marked:not(.free-space)');
+      cells.forEach((cell, idx) => {
+        setTimeout(() => {
+          cell.style.animation = 'disappear 0.4s ease forwards';
+        }, idx * 30);
+      });
+
+      setTimeout(async () => {
+        const markedRef = ref(db, `users/${currentUser.uid}/cards/${activeCardId}/marked`);
+        await set(markedRef, { "2-2": true });
+      }, (cells.length * 30) + 400);
+    });
+
+    function listenToUserCards() {
+      const cardsRef = ref(db, `users/${currentUser.uid}/cards`);
+      onValue(cardsRef, (snapshot) => {
+        const data = snapshot.val() || {};
+        localCardsCache = data;
+        
+        historyList.innerHTML = '';
+        const sortedKeys = Object.keys(data).sort((a,b) => data[b].timestamp - data[a].timestamp);
+        
+        if(sortedKeys.length > 0 && !activeCardId) {
+          activeCardId = sortedKeys[0];
+        }
+
+        sortedKeys.forEach((key, index) => {
+          const li = document.createElement('li');
+          li.className = `history-item ${key === activeCardId ? 'active' : ''}`;
+          li.style.animationDelay = `${index * 0.05}s`;
+          const date = new Date(data[key].timestamp).toLocaleDateString('pt-BR', {hour: '2-digit', minute:'2-digit'});
+          li.innerHTML = `<span>🎟️ #${key.substring(1, 6).toUpperCase()}</span> <span class="time">${date}</span>`;
+          
+          li.addEventListener('click', () => {
+            if(activeCardId === key) return;
+            activeCardId = key;
+            document.querySelectorAll('.history-item').forEach(el => el.classList.remove('active'));
+            li.classList.add('active');
+            
+            bingoCardContainer.classList.add('pop-out');
+            setTimeout(() => {
+              renderActiveCard();
+            }, 300);
+          });
+          historyList.appendChild(li);
+        });
+
+        renderActiveCard();
+      });
+    }
+
+    function renderActiveCard() {
+      bingoCardContainer.innerHTML = '';
+      bingoCardContainer.classList.remove('pop-out');
+      
+      if(!activeCardId || !localCardsCache[activeCardId]) {
+        bingoCardContainer.innerHTML = '<div class="empty-state">Toque em "Nova Cartela" para começar sua sorte! 🍀</div>';
+        activeCardBadge.innerText = "Nenhuma";
+        return;
+      }
+
+      activeCardBadge.innerText = `#${activeCardId.substring(1, 6).toUpperCase()}`;
+      const card = localCardsCache[activeCardId];
+      const matrix = card.matrix;
+      const marked = card.marked || {};
+
+      const letters = ['B', 'I', 'N', 'G', 'O'];
+      letters.forEach((letter, idx) => {
+        const headerCell = document.createElement('div');
+        headerCell.className = 'bingo-header-cell';
+        headerCell.style.animationDelay = `${idx * 0.04}s`;
+        headerCell.innerText = letter;
+        bingoCardContainer.appendChild(headerCell);
+      });
+
+      let delayCounter = 0;
+      for(let r = 0; r < 5; r++) {
+        for(let c = 0; c < 5; c++) {
+          const cellValue = matrix[r][c];
+          const cellId = `${r}-${c}`;
+          const isMarked = !!marked[cellId];
+          
+          const cellEl = document.createElement('div');
+          cellEl.innerText = cellValue;
+          cellEl.style.animationDelay = `${(delayCounter * 0.015) + 0.2}s`;
+          delayCounter++;
+
+          if(cellValue === "FREE") {
+            cellEl.className = 'bingo-cell free-space';
+          } else {
+            cellEl.className = `bingo-cell ${isMarked ? 'marked' : ''}`;
+            cellEl.addEventListener('click', () => {
+              cellEl.classList.add('rubber-band');
+              toggleCellMark(cellId, isMarked);
+            });
+          }
+          bingoCardContainer.appendChild(cellEl);
+        }
+      }
+    }
+
+    async function toggleCellMark(cellId, currentMarkedState) {
+      if(!currentUser || !activeCardId) return;
+      const cellRef = ref(db, `users/${currentUser.uid}/cards/${activeCardId}/marked/${cellId}`);
+      if(currentMarkedState) {
+        await set(cellRef, null);
+      } else {
+        await set(cellRef, true);
+      }
+    }
+  </script>
+</body>
+</html>
+
